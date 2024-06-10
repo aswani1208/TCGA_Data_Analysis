@@ -1,0 +1,165 @@
+library(SummarizedExperiment)
+project <- "TCGA-COAD"  
+
+# Download RNA-Seq data (gene expression)
+rna_seq_query <- GDCquery(
+  project = project,
+  data.category = "Transcriptome Profiling",
+  data.type = "Gene Expression Quantification",
+  workflow.type = "STAR - Counts"
+)
+GDCdownload(rna_seq_query)
+rna_seq_data <- GDCprepare(rna_seq_query)
+output_query_TCGA_rna_seq <- getResults(rna_seq_query)
+
+# Download DNA Methylation data
+methylation_query <- GDCquery(
+  project = project,
+  data.category = "DNA Methylation",
+  data.type = "Methylation Beta Value",
+  platform = "Illumina Human Methylation 450"
+)
+GDCdownload(methylation_query)
+methylation_data <- GDCprepare(methylation_query)
+output_query_TCGA_methylation_seq <- getResults(methylation_query)
+
+# Download Proteome data
+proteome_query <- GDCquery(
+  project = project,
+  data.category = "Proteome Profiling",
+  data.type = "Protein Expression Quantification"
+)
+GDCdownload(proteome_query)
+proteome_data <- GDCprepare(proteome_query)
+output_query_TCGA_proteome_seq <- getResults(proteome_query)
+
+mirna_query <- GDCquery(
+  project = project,
+  data.category = "Transcriptome Profiling",
+  data.type = "miRNA Expression Quantification"
+)
+GDCdownload(mirna_query)
+mirna_data <- GDCprepare(mirna_query)
+output_query_TCGA_mirna_seq <- getResults(mirna_query)
+
+
+
+
+
+# Function to extract sample IDs depending on data class
+extract_sample_ids <- function(data) {
+  if (is(data, "SummarizedExperiment")) {
+    return(colData(data)$sample_submitter_id)
+  } else if (is(data, "data.frame")) {
+    return(data$sample_submitter_id)
+  } else {
+    stop("Unsupported data type")
+  }
+}
+
+rna_seq_samples <- extract_sample_ids(rna_seq_data)
+methylation_samples <- extract_sample_ids(methylation_data)
+#proteome_samples <- extract_sample_ids(proteome_data)
+mirna_samples <- coldata(mirna_data)
+
+# Extract and standardize miRNA sample IDs
+extract_mirna_barcode <- function(ids) {
+  sapply(ids, function(id) {
+    matches <- regexpr("TCGA-[A-Z0-9]{2}-[A-Z0-9]{4}-[0-9]{2}[A-Z]", id)
+    if (matches[1] != -1) {
+      return(regmatches(id, matches))
+    } else {
+      return(NA)
+    }
+  })
+}
+
+mirna_samples <- extract_mirna_barcode(mirna_samples)
+mirna_samples <- na.omit(mirna_samples)
+
+# Update column names of miRNA data with extracted barcodes
+#colnames(mirna_data) <- mirna_samples
+colnames(rna_seq_data) <- rna_seq_samples
+colnames(methylation_data) <- methylation_samples
+
+
+common_samples <- Reduce(intersect, list(rna_seq_samples, methylation_samples, mirna_samples))
+write.csv(common_samples, file = "filtered_data/common_samples.csv", row.names = TRUE)
+
+# Filter datasets to keep only common sample submitter IDs
+filter_data_by_samples <- function(data, sample_ids, common_samples) {
+  sample_mask <- sample_ids %in% common_samples
+  if (is(data, "SummarizedExperiment")) {
+    filtered_data <- data[, sample_mask]
+  } else if (is(data, "data.frame")) {
+    filtered_data <- data[sample_mask, ]
+  } else {
+    stop("Unsupported data type")
+  }
+  return(filtered_data)
+}
+
+# Filter each dataset by common sample submitter IDs
+rna_seq_data_filtered <- filter_data_by_samples(rna_seq_data, rna_seq_samples, common_samples)
+methylation_data_filtered <- filter_data_by_samples(methylation_data, methylation_samples, common_samples)
+#proteome_data_filtered <- filter_data_by_samples(proteome_data, proteome_samples, common_samples)
+mirna_data_filtered <- filter_data_by_samples(mirna_data, mirna_samples, common_samples)
+
+# Extract assay data from SummarizedExperiment objects or data frames
+extract_assay_data <- function(data) {
+  if (is(data, "SummarizedExperiment")) {
+    return(as.data.frame(assay(data)))
+  } else if (is(data, "data.frame")) {
+    return(data)
+  } else {
+    stop("Unsupported data type")
+  }
+}
+
+rna_seq_counts <- extract_assay_data(rna_seq_data_filtered)
+methylation_beta <- extract_assay_data(methylation_data_filtered)
+#proteome_expression <- extract_assay_data(proteome_data_filtered)
+mirna_counts <- extract_assay_data(mirna_data_filtered)
+
+mirna_counts <- mirna_counts %>% select(contains("reads_per_million_miRNA_mapped"))
+
+# Function to remove rows with only 0 and NA values
+remove_empty_rows <- function(data) {
+  data[rowSums(is.na(data) | data == 0) < ncol(data), ]
+}
+
+# Remove empty rows from the datasets
+rna_seq_counts <- remove_empty_rows(rna_seq_counts)
+methylation_beta <- remove_empty_rows(methylation_beta)
+#proteome_expression <- remove_empty_rows(proteome_expression)
+mirna_counts <- remove_empty_rows(mirna_counts)
+
+# Create a directory to save filtered data
+dir.create("filtered_data", showWarnings = FALSE)
+
+# Save filtered datasets as TSV files
+write.table(rna_seq_counts, file = "filtered_data/rna_seq_data_filtered.tsv", sep = "\t", row.names = TRUE, quote = FALSE)
+write.table(methylation_beta, file = "filtered_data/methylation_data_filtered.tsv", sep = "\t", row.names = TRUE, quote = FALSE)
+write.table(proteome_expression, file = "filtered_data/proteome_data_filtered.tsv", sep = "\t", row.names = TRUE, quote = FALSE)
+write.table(mirna_counts, file = "filtered_data/mirna_data_filtered.tsv", sep = "\t", row.names = TRUE, quote = FALSE)
+
+
+# Create a directory to save filtered data
+dir.create("filtered_data", showWarnings = FALSE)
+
+# Save filtered datasets as CSV files
+write.csv(rna_seq_counts, file = "filtered_data/rna_seq_data_filtered.csv", row.names = TRUE)
+write.csv(methylation_beta, file = "filtered_data/methylation_data_filtered.csv", row.names = TRUE)
+#write.csv(proteome_expression, file = "filtered_data/proteome_data_filtered.csv", row.names = TRUE)
+write.csv(mirna_counts, file = "filtered_data/mirna_data_filtered.csv", row.names = TRUE)
+
+
+
+
+
+
+
+
+
+
+

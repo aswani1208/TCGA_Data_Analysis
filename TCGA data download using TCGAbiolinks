@@ -1,4 +1,7 @@
+library(TCGAbiolinks)
+library(dplyr)
 library(SummarizedExperiment)
+
 project <- "TCGA-COAD"  
 
 # Download RNA-Seq data (gene expression)
